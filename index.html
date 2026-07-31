@@ -13,6 +13,7 @@
         .url-box { margin-top: 25px; padding: 15px; background: #2a2a2a; border-radius: 6px; word-break: break-all; display: none; }
         .url-box a { color: #00aaff; text-decoration: none; font-weight: bold; }
         input { width: 100%; padding: 10px; margin-top: 10px; background: #2a2a2a; color: white; border: 1px solid #444; border-radius: 6px; box-sizing: border-box; }
+        .error-log { color: #ff8888; font-size: 12px; margin-top: 15px; text-align: left; background: #000; padding: 10px; border-radius: 4px; display: none; }
     </style>
 </head>
 <body>
@@ -34,16 +35,24 @@
     </div>
 
     <button id="actionBtn" onclick="triggerWorkflow()" disabled>Start Navidrome</button>
+    <div id="errorLog" class="error-log"></div>
 </div>
 
 <script>
-// Configure your details here
+// ⚠️ MAKE SURE THESE THREE VALUES ARE EXACTLY CORRECT
 const OWNER = "Minecatl1"; 
-const REPO = "YOUR_REPOSITORY_NAME"; // Replace with your actual repository name
-const WORKFLOW_ID = "deploy.yml";     // The filename of your workflow YAML file
+const REPO = "Musicserver"; // <-- Change this to your exact repo name if different!
+const WORKFLOW_ID = "main.yml"; // <-- Must match your workflow .yml file name precisely!
+
+function logError(msg) {
+    const box = document.getElementById('errorLog');
+    box.style.display = "block";
+    box.innerText = "Debug info: " + msg;
+}
 
 function saveToken() {
     localStorage.setItem('gh_pat', document.getElementById('patInput').value);
+    document.getElementById('errorLog').style.display = "none";
     checkServerStatus();
 }
 
@@ -51,39 +60,56 @@ async function fetchGH(endpoint, options = {}) {
     const token = localStorage.getItem('gh_pat') || document.getElementById('patInput').value;
     if (!token) return null;
     
-    const res = await fetch(`https://github.com{OWNER}/${REPO}/${endpoint}`, {
-        ...options,
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/vnd.github+json',
-            ...options.headers
+    try {
+        const res = await fetch(`https://github.com{OWNER}/${REPO}/${endpoint}`, {
+            ...options,
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/vnd.github+json',
+                ...options.headers
+            }
+        });
+        if (!res.ok) {
+            logError(`GitHub API returned HTTP ${res.status} for ${endpoint}`);
+            return null;
         }
-    });
-    return res.ok ? res.json() : null;
+        // workflow dispatches return 204 No Content (no json body)
+        if (res.status === 204) return true; 
+        return await res.json();
+    } catch (err) {
+        logError(err.toString());
+        return null;
+    }
 }
 
 async function checkServerStatus() {
     const token = localStorage.getItem('gh_pat');
     if (!token) {
-        document.getElementById('statusText').innerText = "Please enter a GitHub PAT";
+        document.getElementById('statusText').innerText = "Please enter your GitHub PAT above";
         document.getElementById('actionBtn').disabled = true;
         return;
     }
 
     const data = await fetchGH(`actions/workflows/${WORKFLOW_ID}/runs?per_page=1`);
-    if (!data || !data.workflow_runs.length) {
-        document.getElementById('statusText').innerText = "No runs found.";
+    if (!data) {
+        document.getElementById('statusText').innerText = "Error connecting to GitHub";
+        return;
+    }
+    
+    if (!data.workflow_runs || data.workflow_runs.length === 0) {
+        document.getElementById('statusText').innerText = "Ready (No runs found)";
+        document.getElementById('statusText').style.color = "#0076ff";
         document.getElementById('actionBtn').disabled = false;
         return;
     }
 
     const latestRun = data.workflow_runs[0];
     const status = latestRun.status;
-    const conclusion = latestRun.conclusion;
 
     const statusText = document.getElementById('statusText');
     const actionBtn = document.getElementById('actionBtn');
     const urlContainer = document.getElementById('urlContainer');
+    const tunnelLink = document.getElementById('tunnelLink');
 
     if (status === 'queued' || status === 'in_progress') {
         statusText.innerText = "⚡ Running (Navidrome is Active)";
@@ -91,8 +117,10 @@ async function checkServerStatus() {
         actionBtn.disabled = true;
         actionBtn.innerText = "Server is Online";
         
-        // Attempt to fetch the URL artifact if it exists yet
-        fetchTunnelUrl(latestRun.id);
+        // Point them directly to the active live logs to grab the link immediately
+        tunnelLink.href = latestRun.html_url;
+        tunnelLink.innerText = "Click here to see Live Tunnel URL inside Action Logs";
+        urlContainer.style.display = "block";
     } else {
         statusText.innerText = "🛑 Offline";
         statusText.style.color = "#ff3b30";
@@ -106,42 +134,19 @@ async function triggerWorkflow() {
     document.getElementById('actionBtn').disabled = true;
     document.getElementById('statusText').innerText = "Requesting startup...";
     
-    const success = await fetchGH(`actions/workflows/${WORKFLOW_ID}/dispatches`, {
+    const res = await fetchGH(`actions/workflows/${WORKFLOW_ID}/dispatches`, {
         method: 'POST',
-        body: JSON.stringify({ ref: 'main' }) // Change to your default branch name if not main
+        body: JSON.stringify({ ref: 'main' }) // Make sure your default branch is 'main'
     });
 
-    // API returns 204 No Content on success, which returns null in our helper
-    setTimeout(checkServerStatus, 3000);
-}
-
-async function fetchTunnelUrl(runId) {
-    const urlContainer = document.getElementById('urlContainer');
-    const tunnelLink = document.getElementById('tunnelLink');
-    
-    const artifactData = await fetchGH(`actions/runs/${runId}/artifacts`);
-    if (!artifactData || !artifactData.artifacts.length) {
-        urlContainer.style.display = "block";
-        tunnelLink.innerText = "Generating tunnel URL... (takes ~30 seconds)";
-        tunnelLink.removeAttribute('href');
-        return;
-    }
-
-    const targetArtifact = artifactData.artifacts.find(a => a.name === 'live-tunnel-url');
-    if (targetArtifact) {
-        // We cannot directly read artifact text content over API due to zip compression.
-        // Instead, as a backup to avoid complex unzipping in JS, we notify the user 
-        // that they can jump to logs or use a simple alternative tracking method if preferred.
-        tunnelLink.href = `https://github.com{OWNER}/${REPO}/actions/runs/${runId}`;
-        tunnelLink.innerText = "Click here to view Action Details & URL Output";
-        urlContainer.style.display = "block";
-    }
+    // Wait 5 seconds for GitHub backend to register the new run, then refresh
+    setTimeout(checkServerStatus, 5000);
 }
 
 // Load initial states
 document.getElementById('patInput').value = localStorage.getItem('gh_pat') || '';
 checkServerStatus();
-setInterval(checkServerStatus, 15000); // Poll every 15 seconds
+setInterval(checkServerStatus, 20000); // Check every 20 seconds
 </script>
 </body>
 </html>
