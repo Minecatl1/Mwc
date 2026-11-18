@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.workspace_repo || 'Eaglercraft-Archive/EaglercraftX-1_8-workspace' }}
-          ref: ${{ inputs.workspace_ref || 'main' }}
+          ref: ${{ inputs.workspace_ref || 'master' }}
           path: workspace
 
       - name: Check out EaglerForgeInjector
