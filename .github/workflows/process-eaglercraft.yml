@@ -10,7 +10,7 @@ on:
       workspace_ref:
         description: Branch or tag of the workspace repository
         required: false
-        default: main
+        default: master
   push:
     paths:
       - ".github/workflows/process-eaglercraft.yml"
