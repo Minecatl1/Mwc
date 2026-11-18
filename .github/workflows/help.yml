@@ -1,0 +1,96 @@
+name: Build & Mod Eaglercraft HTML
+
+on:
+  workflow_dispatch:
+    inputs:
+      workspace_repo:
+        description: EaglercraftX 1.8 workspace repository to compile from
+        required: false
+        default: Eaglercraft-Archive/EaglercraftX-1_8-workspace
+      workspace_ref:
+        description: Branch or tag of the workspace repository
+        required: false
+        default: master
+  push:
+    paths:
+      - ".github/workflows/process-eaglercraft.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-mod:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out EaglercraftX 1.8 Workspace
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.workspace_repo || 'Eaglercraft-Archive/EaglercraftX-1_8-workspace' }}
+          ref: ${{ inputs.workspace_ref || 'master' }}
+          path: workspace
+
+      - name: Check out EaglerForgeInjector
+        uses: actions/checkout@v4
+        with:
+          repository: eaglerforge/EaglerForgeInjector
+          ref: main
+          path: injector
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: injector/package-lock.json
+
+      - name: Disable TeaVM obfuscation & minification
+        working-directory: workspace
+        run: |
+          set -euo pipefail
+          # Disable obfuscation across Gradle build scripts so TeaVM outputs readable symbols
+          find . -name "build.gradle*" -exec sed -i \
+            -e 's/obfuscated\s*=\s*true/obfuscated = false/g' \
+            -e 's/obfuscated\.set(true)/obfuscated.set(false)/g' \
+            -e 's/minified\s*=\s*true/minified = false/g' \
+            -e 's/minified\.set(true)/minified.set(false)/g' {} +
+
+      - name: Compile EaglercraftX 1.8 Offline HTML
+        working-directory: workspace
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew makeMainOfflineDownload --no-daemon
+
+          # Locate the compiled offline HTML (prefer en_US if multiple are generated)
+          BUILT_HTML=$(find /home/runner/work/Mwc/Mwc/workspace/target_teavm_javascript/javascript -maxdepth 2 -name "*Offline*en_US*.html" | head -n 1)
+          if [ -z "$BUILT_HTML" ]; then
+            BUILT_HTML=$(find /home/runner/work/Mwc/Mwc/workspace/target_teavm_javascript/javascript -maxdepth 2 -name "*Offline*.html" | head -n 1)
+          fi
+
+          if [ -z "$BUILT_HTML" ] || [ ! -s "$BUILT_HTML" ]; then
+            echo "Error: Failed to locate compiled offline HTML in workspace/javascript/"
+            ls -la /home/runner/work/Mwc/Mwc/workspace/target_teavm_javascript/javascript/ || true
+            exit 1
+          fi
+
+          echo "Compiled base HTML: $BUILT_HTML"
+          cp "$BUILT_HTML" ../injector/input.html
+
+      - name: Install EaglerForgeInjector dependencies
+        working-directory: injector
+        run: npm ci
+
+      - name: Inject EaglerForge ModAPI
+        working-directory: injector
+        run: |
+          set -euo pipefail
+          npm run efi /help
