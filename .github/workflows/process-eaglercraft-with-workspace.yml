@@ -13,7 +13,7 @@ on:
         default: master
   push:
     paths:
-      - ".github/workflows/process-eaglercraft.yml"
+      - ".github/workflows/process-eaglercraft-with-workspace.yml"
 
 permissions:
   contents: write
@@ -39,7 +39,7 @@ jobs:
           path: injector
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
