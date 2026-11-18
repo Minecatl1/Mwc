@@ -93,7 +93,7 @@ jobs:
         working-directory: injector
         run: |
           set -euo pipefail
-          npm run efi -- input.html processed.html /eaglerforge /verbose
+          npm run efi -- input.html processed.html /eaglerforge /verbose /minify /minify_extras
           test -s processed.html
           cp processed.html ../modded.html
 
