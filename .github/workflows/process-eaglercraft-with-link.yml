@@ -1,0 +1,77 @@
+name: Build & Mod Eaglercraft HTML
+
+on:
+  workflow_dispatch:
+    inputs:
+      link:
+        description: EaglercraftX Direct Download Link
+        required: false
+        default: https://github.com/Eaglercraft-Archive/unminified-eaglercraft-builds-1.12/releases/download/u2/Eaglercraft_1.12_Offline_International.html
+  push:
+    paths:
+      - ".github/workflows/process-eaglercraft-with-link.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-mod:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out EaglerForgeInjector
+        uses: actions/checkout@v4
+        with:
+          repository: eaglerforge/EaglerForgeInjector
+          ref: main
+          path: injector
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: injector/package-lock.json
+
+      - name: Get EaglercraftX Offline HTML
+        working-directory: workspace
+        run: |
+          set -euo pipefail
+          curl -LO ${{ inputs.link || 'https://github.com/Eaglercraft-Archive/unminified-eaglercraft-builds-1.12/releases/download/u2/Eaglercraft_1.12_Offline_International.html' }}
+
+          # Locate the compiled offline HTML (prefer en_US)
+          BUILT_HTML=$(find /home/runner/work/Mwc/Mwc/workspace/ -maxdepth 2 -name "*Offline*.html" | head -n 1)
+
+          if [ -z "$BUILT_HTML" ] || [ ! -s "$BUILT_HTML" ]; then
+            echo "Error: Failed to locate compiled offline HTML in workspace"
+            ls -la /home/runner/work/Mwc/Mwc/workspace/ || true
+            exit 1
+          fi
+
+          echo "Compiled base HTML: $BUILT_HTML"
+          cp "$BUILT_HTML" ../injector/input.html
+
+      - name: Install EaglerForgeInjector dependencies
+        working-directory: injector
+        run: npm ci
+
+      - name: Inject EaglerForge ModAPI
+        working-directory: injector
+        run: |
+          set -euo pipefail
+          npm run efi -- input.html processed.html /eaglerforge /verbose /minify /minify_extras
+          test -s processed.html
+          cp processed.html ../modded.html
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="eaglercraft-modded-${GITHUB_RUN_ID}"
+          URL_USED="${{ inputs.link || 'https://github.com/Eaglercraft-Archive/unminified-eaglercraft-builds-1.12/releases/download/u2/Eaglercraft_1.12_Offline_International.html' }}"
+          gh release create "$TAG" modded.html \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Modded EaglercraftX 1.8 HTML" \
+            --notes "Downloaded from (${REPO_USED}) and injected with EaglerForge."
