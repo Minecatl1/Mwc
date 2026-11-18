@@ -1,0 +1,125 @@
+name: Process Eaglercraft HTML
+
+on:
+  workflow_dispatch:
+    inputs:
+      html_url:
+        description: Link to an Eaglercraft HTML file
+        required: false
+        default: https://github.com/Eaglercraft-Archive/unminified-eaglercraft-builds-1.12/releases/download/u2/Eaglercraft_1.12_Offline_International.html
+      unminify:
+        description: Minify and minify-extras are disabled to preserve readable output
+        type: boolean
+        required: false
+        default: true
+      unobfuscate:
+        description: Attempt to remove obfuscation patterns before injection
+        type: boolean
+        required: false
+        default: true
+  push:
+    paths:
+      - ".github/workflows/process-eaglercraft.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out EaglerForgeInjector
+        uses: actions/checkout@v4
+        with:
+          repository: eaglerforge/EaglerForgeInjector
+          ref: main
+          path: injector
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: injector/package-lock.json
+
+      - name: Install injector dependencies
+        working-directory: injector
+        run: npm ci
+
+      - name: Download and validate HTML
+        env:
+          HTML_URL: ${{ inputs.html_url || 'https://github.com/Eaglercraft-Archive/unminified-eaglercraft-builds-1.12/releases/download/u2/Eaglercraft_1.12_Offline_International.html' }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output source.html \
+            "$HTML_URL"
+          test -s source.html
+          grep -qi "<html" source.html
+          echo "HTML_URL=$HTML_URL" >> "$GITHUB_ENV"
+
+      - name: Attempt unsigned, unobfuscated processing
+        env:
+          UNMINIFY: ${{ inputs.unminify }}
+          UNOBFUSCATE: ${{ inputs.unobfuscate }}
+        run: |
+          set -euo pipefail
+
+          cp source.html unsigned-unobfuscated.html
+
+          if [[ "$UNOBFUSCATE" == "true" ]]; then
+            python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          path = Path("unsigned-unobfuscated.html")
+          html = path.read_text(encoding="utf-8", errors="replace")
+
+          # Remove common Minified JavaScript? signatures and source obfuscation wrappers.
+          # This is intentionally conservative: it changes only formatting/comments,
+          # and does not claim to reliably reverse arbitrary obfuscation.
+          html = re.sub(r"(?m)^[\t ]*//[^\n]*(?:sourceMappingURL|webpack|obfuscated)[^\n]*\n?", "", html)
+
+          path.write_text(html, encoding="utf-8")
+          PY
+          fi
+
+          if [[ "$UNMINIFY" == "true" ]]; then
+            python3 - <<'PY'
+          import html as html_lib
+          import re
+          from pathlib import Path
+
+          path = Path("unsigned-unobfuscated.html")
+          text = path.read_text(encoding="utf-8", errors="replace")
+
+          # Restore common HTML formatting only where scripts/styles are unprotected.
+          text = re.sub(r">\s+<", ">\\n<", text)
+          text = re.sub(r"([{};])([A-Za-z_$])", r"\1\n\2", text)
+          text = re.sub(r"([\r\n]{2,})", "\n", text)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+          fi
+
+      - name: Add or refresh ModAPI
+        working-directory: injector
+        run: |
+          set -euo pipefail
+          cp ../unsigned-unobfuscated.html input.html
+          npm run efi -- input.html processed.html /eaglerforge /verbose
+          test -s processed.html
+          cp processed.html ../modded.html
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="eaglercraft-processed-${GITHUB_RUN_ID}"
+          gh release create "$TAG" modded.html \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Processed Eaglercraft HTML" \
+            --notes "Source HTML used: ${HTML_URL}"
