@@ -71,14 +71,14 @@ jobs:
           ./gradlew makeMainOfflineDownload --no-daemon
 
           # Locate the compiled offline HTML (prefer en_US if multiple are generated)
-          BUILT_HTML=$(find javascript -maxdepth 2 -name "*Offline*en_US*.html" | head -n 1)
+          BUILT_HTML=$(find /home/runner/work/Mwc/Mwc/workspace/target_teavm_javascript/javascript -maxdepth 2 -name "*Offline*en_US*.html" | head -n 1)
           if [ -z "$BUILT_HTML" ]; then
-            BUILT_HTML=$(find javascript -maxdepth 2 -name "*Offline*.html" | head -n 1)
+            BUILT_HTML=$(find /home/runner/work/Mwc/Mwc/workspace/target_teavm_javascript/javascript -maxdepth 2 -name "*Offline*.html" | head -n 1)
           fi
 
           if [ -z "$BUILT_HTML" ] || [ ! -s "$BUILT_HTML" ]; then
             echo "Error: Failed to locate compiled offline HTML in workspace/javascript/"
-            ls -la javascript/ || true
+            ls -la /home/runner/work/Mwc/Mwc/workspace/target_teavm_javascript/javascript/ || true
             exit 1
           fi
 
